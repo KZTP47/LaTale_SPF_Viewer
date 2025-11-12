@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>彩虹岛SPF查看器</title>
+  <style>
+    :root{ --splitter-width:8px; }
+    html,body{ height:100%; margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial; }
+    .container{
+      height:100vh;
+      display:flex;
+      align-items:stretch;
+      background:#fafafa;
+    }
+    .pane{
+      overflow:auto;
+      padding:18px;
+      box-sizing:border-box;
+    }
+    .left{
+      min-width:120px;
+      width:20%;
+      background:linear-gradient(180deg,#fff,#f7f7f9);
+      border-right:1px solid rgba(0,0,0,0.06);
+    }
+    ul.item-list{ list-style:none; margin:0; padding:0; }
+    ul.item-list li{
+      padding:10px 12px; margin-bottom:8px; border-radius:8px; background:transparent; cursor:pointer;
+      transition:background .12s, transform .08s;
+      display:flex; align-items:center; gap:12px;
+    }
+    ul.item-list li:hover{ background:rgba(0,0,0,0.03); transform:translateY(-1px); }
+    ul.item-list li:focus { background:rgba(0,0,0,0.03); transform:translateY(-1px); }
+    .splitter{
+      width:var(--splitter-width);
+      cursor:col-resize;
+      background:linear-gradient(180deg,transparent 20%, rgba(0,0,0,0.04) 20%, rgba(0,0,0,0.04) 80%, transparent 80%);
+      display:flex; align-items:center; justify-content:center;
+      position:relative;
+      touch-action:none;
+    }
+    .splitter:before{
+      content:''; width:2px; height:36px; border-radius:2px; background:rgba(0,0,0,0.12);
+    }
+    .right{
+      flex:1 1 0%;
+      background: #111;
+      color:#fff;
+      /*display:flex; flex-direction:column; align-items:center; justify-content:center;
+      */
+    }
+    .image-wrap{ max-width:100%; max-height:100%; display:flex; align-items:center; justify-content:center; padding:18px; }
+    .image-wrap svg{ width:100%; height:100%; max-height:86vh; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.35); }
+    .file-input{ margin-top:10px; }
+    @media (max-width:700px){
+      .container{ flex-direction:column; }
+      .splitter{ height:var(--splitter-width); width:100%; cursor:row-resize }
+      .left{ width:100%; min-height:120px }
+      .right{ flex:1 }
+    }
+    .splitter:focus{ outline:3px solid rgba(0,120,255,0.18); }
+  </style>
+</head>
+<body>
+  <div class="container" id="container">
+    <aside class="pane left" id="leftPane" aria-label="Item list">
+      <h2>彩虹岛SPF查看器</h2>
+      <p>右键图片->另存为 即可保存图片</p>
+      <h3>选择SPF文件</h3>
+      <input type="file" id="fileInput" class="file-input" />
+      <h3>SPF内文件列表</h3>
+      <p>搜索</p>
+      <input type="text" id="filter" />
+      <ul class="item-list" id="itemList"></ul>
+    </aside>
+
+    <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize panels" aria-valuemin="10" aria-valuemax="90" aria-valuenow="40"></div>
+
+    <main class="pane right" id="rightPane" aria-label="Image preview">
+    </main>
+  </div>
+
+  <script>
+    (function(){
+      const container = document.getElementById('container');
+      const left = document.getElementById('leftPane');
+      const splitter = document.getElementById('splitter');
+      const right = document.getElementById('rightPane');
+      const STORAGE_KEY = 'splitter-left-pct-v1';
+      const filter = document.getElementById('filter');
+
+      function clamp(n, a, b){ return Math.min(b, Math.max(a, n)); }
+      function setLeftPct(pct){ pct = clamp(pct, 10, 90); left.style.width = pct + '%'; splitter.setAttribute('aria-valuenow', Math.round(pct)); }
+      const saved = parseFloat(localStorage.getItem(STORAGE_KEY));
+      if(!Number.isNaN(saved)) setLeftPct(saved);
+
+      let dragging = false;
+      function calcPctFromX(x){ const rect = container.getBoundingClientRect(); const px = x - rect.left; return (px / rect.width) * 100; }
+
+      splitter.addEventListener('pointerdown', (ev)=>{
+        ev.preventDefault();
+        dragging = true;
+        splitter.setPointerCapture(ev.pointerId);
+        document.body.style.userSelect = 'none';
+      });
+
+      window.addEventListener('pointermove', (ev)=>{
+        if(!dragging) return;
+        const pct = calcPctFromX(ev.clientX);
+        setLeftPct(pct);
+      });
+
+      window.addEventListener('pointerup', (ev)=>{
+        if(!dragging) return;
+        dragging = false;
+        try{ splitter.releasePointerCapture(ev.pointerId); }catch(e){}
+        document.body.style.userSelect = '';
+        localStorage.setItem(STORAGE_KEY, parseFloat(left.style.width));
+      });
+
+      splitter.addEventListener('dblclick', ()=>{ setLeftPct(20); localStorage.setItem(STORAGE_KEY, parseFloat(left.style.width)); });
+
+      window.addEventListener('resize', ()=>{
+        const pct = parseFloat(left.style.width) || 20;
+        setLeftPct(pct);
+      });
+
+      function filt() {
+        const items = Array.from(document.querySelectorAll('.item-list li'));
+        const regex = new RegExp(filter.value, 'i');
+        items.forEach((item)=>{
+          if (regex.test(item.innerText)) {
+            item.style.display = 'block';
+          }
+          else {
+            item.style.display = 'none';
+          }
+        });
+      }
+
+      filter.addEventListener('input', filt);
+      filter.addEventListener('click', filt);
+
+      async function newSpriteGroups(blob) {
+        const bytes = await blob.bytes().then((value) => value);
+        const dataview = new DataView(bytes.buffer);
+        const decoder = new TextDecoder("EUC-KR");
+
+        //const groups = [];
+        const sprites = [];
+
+        const groupCount = dataview.getUint32(4, true);
+        var offset = 8;
+        for (i = 0; i < groupCount; i++) {
+          //const group = [];
+
+          const spriteCount = dataview.getUint32(offset + 0, true);
+          //const name = decoder.decode(bytes.slice(offset + 4, offset + 20)).replace(/\0.*$/, '');
+          console.log(bytes.slice(offset + 20, offset + 136));
+          offset += 136;
+          var filename = "";
+          for (j = 0; j < spriteCount; j++) {
+            const index = dataview.getUint32(offset + 0, true);
+            const bias = [
+              dataview.getInt32(offset + 4, true),
+              dataview.getInt32(offset + 8, true),
+            ];
+            const maybeCenter = [
+              dataview.getFloat32(offset + 12, true),
+              dataview.getFloat32(offset + 16, true),
+            ];
+            const pos = [
+              dataview.getUint32(offset + 20, true),
+              dataview.getUint32(offset + 24, true),
+            ];
+            const size = [
+              dataview.getUint32(offset + 28, true) - pos[0],
+              dataview.getUint32(offset + 32, true) - pos[1],
+            ];
+            filename = decoder.decode(bytes.slice(offset + 36, offset + 60)).replace(/\0.*$/, '');
+            sprites.push({index, bias, maybeCenter, pos, size, filename});
+            offset += 164;
+          }
+          sprites.push({"index":0, "bias":0, "maybeCenter":0, "pos":0, "size":0, filename});
+        }
+        return sprites;
+      }
+
+      function updateTable(file, entry) {
+        const tbl = file.slice(entry.offset, entry.offset+entry.length);
+        newSpriteGroups(tbl).then((sprites) => {
+          const table = document.createElement('table');
+          table.border = '1';
+          right.innerHTML = "";
+          right.appendChild(table);
+
+          const head = document.createElement('thead');
+          const headerRow = document.createElement('tr');
+          const keys = Object.keys(sprites[0]);
+          keys.forEach(key => {
+              const th = document.createElement('th');
+              th.textContent = key;
+              headerRow.appendChild(th);
+          });
+          head.appendChild(headerRow);
+          table.appendChild(head);
+
+          const body = document.createElement('tbody');
+          table.appendChild(body);
+          sprites.forEach(item => {
+              const row = document.createElement('tr');
+              const keys = Object.keys(item); // Get keys for consistent column order
+
+              //console.log(`${item.filename} ${item.index} <Region offsetX="${item.bias[0]}" offsetY="${item.bias[1]}" x="${item.pos[0]}" y="${item.pos[1]}" width="${item.size[0]}" height="${item.size[1]}" />`);
+
+              keys.forEach(key => {
+                  const td = document.createElement('td');
+                  td.textContent = item[key];
+                  row.appendChild(td);
+              });
+              body.appendChild(row);
+          });
+        });
+      }
+
+      function updateImage(file, entry){
+        right.innerHTML = "";
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(file.slice(entry.offset, entry.offset+entry.length));
+        right.appendChild(img);
+      }
+
+      var volume = 0.2;
+      function updateMusic(file, entry){
+        right.innerHTML = "";
+        const audio = document.createElement("audio");
+        audio.src = URL.createObjectURL(file.slice(entry.offset, entry.offset+entry.length));
+        audio.addEventListener('volumechange', (e)=>{ volume = audio.volume; })
+        audio.controls = true;
+        audio.autoplay = true;
+        audio.volume = volume;
+        right.appendChild(audio);
+      }
+
+      async function newEntry(blob) {
+        const filename = await blob.slice(0, 128).bytes().then((value) => new TextDecoder("EUC-KR").decode(value).replace(/\0*$/, ''));
+        const offset = await blob.slice(128, 132).bytes().then((value) => new DataView(value.buffer).getUint32(0, true));
+        const length = await blob.slice(132, 136).bytes().then((value) => new DataView(value.buffer).getUint32(0, true));
+        const index = await blob.slice(136, 140).bytes().then((value) => new DataView(value.buffer).getUint32(0, true));
+        return {filename, offset, length, index};
+      }
+
+      // file input listener
+      const fileInput = document.getElementById('fileInput');
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if(!file || !/\.SPF$/.test(file.name))
+          return;
+
+        const itemList = document.getElementById("itemList");
+        itemList.innerHTML = "";
+
+        newEntry(file.slice(-280, -140)).then(async (entry) => {
+          for (i = entry.offset+entry.length; i < file.size-140; i += 140) {
+            await newEntry(file.slice(i, i+140)).then((entry) => {
+              const li = document.createElement("li");
+              li.innerText = entry.filename;
+              if (/\.PNG$/.test(entry.filename))
+                li.addEventListener('click', ()=> updateImage(file, entry));
+              else if (/\.TBL$/.test(entry.filename))
+                li.addEventListener('click', ()=> updateTable(file, entry));
+              else if (/\.WAV$/.test(entry.filename))
+                li.addEventListener('click', ()=> updateMusic(file, entry));
+              else if (/\.MP3$/.test(entry.filename))
+                li.addEventListener('click', ()=> updateMusic(file, entry));
+              itemList.appendChild(li);
+            });
+          }
+          filter.dispatchEvent(new Event('input'));
+        });
+
+      });
+    })();
+  </script>
+</body>
+</html>
